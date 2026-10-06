@@ -1,0 +1,42 @@
+# All three packages share ONE compose project, keeping `docker compose ps` and
+# `logs` consistent. Discovery does not rely on the project name or on
+# container_name: the network alias below pins the hostname `kage-opend`.
+name: kage
+
+services:
+  opend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kage-opend:local
+    # No container_name: pinning it makes `up --build` fail with
+    # "container name is already in use" once a stale exited container holds it.
+    restart: unless-stopped
+    init: true
+    environment:
+      # Moomoo OpenD runs on the host (it needs the desktop login session).
+      OPEND_HOST: ${OPEND_HOST:-host.docker.internal}
+      OPEND_PORT: ${OPEND_PORT:-11111}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      kage-network:
+        # Explicit alias: on an external network Compose does not add the
+        # service-name alias, so `http://kage-opend:8000` would not resolve.
+        aliases:
+          - kage-opend
+    # No published port by default: only the backend needs to reach it.
+    ports:
+      - "${OPEND_PUBLISH_PORT:-18000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=8).status == 200 else 1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+networks:
+  kage-network:
+    external: true
+    name: ${KAGE_DOCKER_NETWORK:-kage-network}

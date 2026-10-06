@@ -1,0 +1,1 @@
+"""Kage OpenD sidecar package."""
