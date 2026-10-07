@@ -1,0 +1,39 @@
+name: Deploy Kage production
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: kage-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t kage-opend:ci .
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.KAGE_HOST }}
+          username: ${{ secrets.KAGE_USER }}
+          key: ${{ secrets.KAGE_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.KAGE_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/Kage
+            make update
+            make deploy
+            make health
