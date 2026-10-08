@@ -34,4 +34,4 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/Kage
-            make ci-deploy
+            flock /opt/Kage/.kage-deploy.lock -c 'make update && make deploy && make health'
