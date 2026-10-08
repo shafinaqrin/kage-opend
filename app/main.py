@@ -131,31 +131,39 @@ def health() -> dict[str, Any]:
 
 
 @app.get("/watchlist")
-def watchlist(market: str = Query(default="MY")) -> dict[str, Any]:
-    """The user's OpenD watchlist, filtered to one market.
-
-    OpenD owns membership. Names come from OpenD basic info, which needs no quote
-    entitlement, so the list is complete even when prices are blocked.
-    """
+def watchlist(market: str = Query(default="MY"), group: str = Query(default="All")) -> dict[str, Any]:
+    """The user's OpenD watchlist group, filtered to one market."""
     key = market.upper()
+    group_key = group.strip() or "All"
+    cache_key = f"{key}:{group_key}"
     now = time.monotonic()
 
-    cached = _WATCHLIST_CACHE.get(key)
+    cached = _WATCHLIST_CACHE.get(cache_key)
     if cached and now - cached[0] < _WATCHLIST_TTL_S:
-        return {"source": SOURCE, "market": key, "symbols": cached[1]}
+        return {"source": SOURCE, "market": key, "group": group_key, "symbols": cached[1]}
 
     try:
-        entries = get_client().watchlist(market=key)
+        entries = get_client().watchlist(market=key, group=group_key)
     except Exception as exc:
         logger.warning("watchlist unavailable: %s", exc)
         if cached is not None:
-            # Serve the last good list rather than blanking the dashboard.
             logger.info("serving cached watchlist after failure")
-            return {"source": SOURCE, "market": key, "symbols": cached[1]}
+            return {"source": SOURCE, "market": key, "group": group_key, "symbols": cached[1]}
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    _WATCHLIST_CACHE[key] = (now, entries)
-    return {"source": SOURCE, "market": key, "symbols": entries}
+    _WATCHLIST_CACHE[cache_key] = (now, entries)
+    return {"source": SOURCE, "market": key, "group": group_key, "symbols": entries}
+
+
+@app.get("/watchlist/groups")
+def watchlist_groups() -> dict[str, Any]:
+    """The user's Moomoo watchlist groups, in OpenD display order."""
+    try:
+        groups = get_client().watchlist_groups()
+    except Exception as exc:
+        logger.warning("watchlist groups unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"source": SOURCE, "groups": groups}
 
 
 @app.get("/snapshot")
@@ -219,6 +227,13 @@ def realized(market: str = Query(default="MY")) -> dict[str, Any]:
 
     _REALIZED_CACHE[key] = (now, entries)
     return {"source": SOURCE, "market": key, "realized": entries}
+
+@app.get("/working-orders")
+def working_orders(market: str = Query(default="MY")) -> dict[str, Any]:
+    try:
+        return {"source": SOURCE, "market": market.upper(), "orders": get_trade_client().working_orders(market=market.upper())}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 @app.get("/positions")
 def positions(market: str = Query(default="MY")) -> dict[str, Any]:

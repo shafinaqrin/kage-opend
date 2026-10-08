@@ -244,7 +244,7 @@ class OpenDClient:
     # -- watchlist ------------------------------------------------------------
 
     def watchlist(self, market: str = "MY", group: str = "All") -> list[dict[str, Any]]:
-        """Read the user's OpenD watchlist and keep only `market` instruments.
+        """Read one user's OpenD watchlist group and keep only `market` instruments.
 
         Names and lot sizes come from `get_stock_basicinfo`, which does not need a
         quote entitlement. That is what lets the watchlist render even while MY
@@ -269,9 +269,31 @@ class OpenDClient:
                         "moomooCode": code,
                         "name": info.get("name") or to_bursa_code(code),
                         "market": market,
+                        "category": group,
                     }
                 )
             return out
+
+    def watchlist_groups(self) -> list[str]:
+        """Return the user's Moomoo watchlist groups in display order."""
+        with self._lock:
+            ret, data = self._call("get_user_security_group")
+            if ret != RET_OK or data is None:
+                raise OpenDUnavailable(f"OpenD could not read watchlist groups: {data}")
+
+            groups: list[str] = []
+            if hasattr(data, "iterrows"):
+                for _, row in data.iterrows():
+                    name = str(row.get("group_name") or row.get("groupName") or row.get("name") or "").strip()
+                    if name and name not in groups:
+                        groups.append(name)
+            elif isinstance(data, (list, tuple)):
+                for entry in data:
+                    name = str(entry.get("group_name") or entry.get("groupName") or entry.get("name") or "").strip() if isinstance(entry, dict) else str(entry).strip()
+                    if name and name not in groups:
+                        groups.append(name)
+
+            return groups or ["All"]
 
     @staticmethod
     def _extract_codes(data: Any, market: str) -> list[str]:
@@ -484,6 +506,20 @@ class OpenTradeClient:
                 time.sleep(0.4)
         raise AssertionError("unreachable")  # pragma: no cover
 
+    def working_orders(self, market: str = "MY") -> list[dict[str, Any]]:
+        """Read active orders so TP/SL can be matched to held positions."""
+        with self._lock:
+            ret, data = self._call("order_list_query", trd_env=TrdEnv.REAL)
+            if ret != RET_OK:
+                raise OpenDUnavailable(f"OpenD could not read working orders: {data}")
+            prefix = f"{market.upper()}."
+            out = []
+            for row in self._index_rows(data):
+                code = str(row.get("code", "")).strip().upper()
+                if code.startswith(prefix):
+                    out.append({"symbol": to_bursa_code(code), "price": _to_float(row.get("price")), "remark": row.get("remark") or "", "orderType": str(row.get("order_type", "")), "auxPrice": _to_float(row.get("aux_price")), "orderId": str(row.get("order_id", "")), "status": str(row.get("order_status", ""))})
+            return out
+
     def positions(self, market: str = "MY") -> list[dict[str, Any]]:
         """Open positions for one market, newest query straight from OpenD.
 
@@ -525,6 +561,10 @@ class OpenTradeClient:
                         "profitLoss": _to_float(row.get("pl_val")),
                         "profitLossPercent": _to_float(row.get("pl_ratio")),
                         "todayProfitLoss": _to_float(row.get("today_pl_val")),
+                        # Working orders are exposed by OpenD only when the
+                        # position row carries the corresponding trigger prices.
+                        "takeProfit": _to_float(row.get("take_profit_price")),
+                        "stopLoss": _to_float(row.get("stop_loss_price")),
                     }
                 )
             return out
